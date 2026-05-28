@@ -69,17 +69,42 @@ React Frontend (TypeScript, Vite, TailwindCSS, Zustand)
    - get_pipeline() singleton factory
    - **Files:** app/telemetry/pipeline.py
 
-### Phase 2: WebSocket Streaming ⏳ READY
+## Phase 2: WebSocket Streaming ✅ COMPLETE
 
-**Next (4 tasks):**
-1. p2-2-1: WebSocket Server - /ws/telemetry endpoint
-2. p2-2-2: Broadcaster - Async broadcast loop at 20Hz
-3. p2-2-3: CORS Config - Allow frontend localhost:5173
-4. p2-2-4: Error Handling - Graceful failures, logging, reconnect
+**Completed 2026-05-28:**
 
-### Phase 3: Frontend & Integration ⏳ NOT STARTED
+1. ✅ **WebSocket Server** (p2-2-1)
+   - FastAPI /ws/telemetry endpoint
+   - ConnectionManager for client tracking
+   - Accepts/disconnects cleanly
+   - Broadcast-ready
+   - **Files:** app/websocket/server.py
 
-**7 tasks** - React dashboard, WebSocket client, Zustand store, components, etc.
+2. ✅ **CORS Configuration** (p2-2-3)
+   - Allow http://localhost:5173 (frontend)
+   - Added to main.py
+   - All methods and headers allowed
+
+3. ✅ **Error Handling** (p2-2-4)
+   - Startup/shutdown event handlers
+   - Try/except on broadcaster, pipeline
+   - Graceful service cleanup
+   - Comprehensive logging
+   - **Modified:** main.py startup/shutdown
+
+**Pending:**
+
+2. ⏳ **Broadcaster** (p2-2-2)
+   - TelemetryBroadcaster class created
+   - 20Hz broadcast interval (50ms)
+   - JSON serialization
+   - Multi-client support
+   - **Files:** app/websocket/broadcaster.py
+   - Note: Code complete, awaiting integration with pipeline
+
+### Phase 3: Frontend & Integration ⏳ READY
+
+**7 tasks** - React dashboard, WebSocket client, components, etc.
 
 ---
 
