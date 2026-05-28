@@ -22,6 +22,22 @@ Use short sentences, fragments, and direct technical data
 
 ---
 
+## ⚠️ IMPORTANT: Session Handoff Document
+
+**Before starting work, READ: `docs/MANAGER.md`**
+
+This document contains:
+- Current project status (Phase 1 COMPLETE, Phase 2 READY)
+- What was completed
+- Next immediate actions
+- Architecture decisions
+- How to continue
+- Testing checklist
+
+This file is updated after every session. It is your memory.
+
+---
+
 PROJECT OVERVIEW
 ----------------
 
