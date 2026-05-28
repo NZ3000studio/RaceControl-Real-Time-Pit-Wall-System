@@ -13,7 +13,7 @@ RaceControl — real-time telemetry dashboard for Assetto Corsa racing simulatio
 cd backend && source venv/bin/activate && python main.py   # start server on :8000
 cd backend && python -m pytest test_ac_reader.py -v         # run tests
 
-# Frontend (not yet implemented — Phase 3)
+# Frontend
 cd frontend && npm install && npm run dev                    # Vite dev server on :5173
 ```
 
@@ -48,6 +48,6 @@ SessionManager (tracks lap changes, session lifecycle)
 
 ## Current Phase
 
-Phase 1 (backend foundation) and Phase 2 (WebSocket streaming) are complete. Phase 3 (React frontend) is next — the `frontend/` directory is empty.
+Phase 1 (backend foundation), Phase 2 (WebSocket streaming), and Phase 3 (React frontend) are complete. 
 
-Status tracking is in `docs/MANAGER.md` — read it before starting a new session.
+Status tracking is in `docs/INDEX.md` — read it before starting a new session.

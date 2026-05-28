@@ -50,6 +50,13 @@ Completion status of Phase 1 implementation.
 - Session manager ✓
 - Async pipeline ✓
 
+### [FRONTEND.md](FRONTEND.md)
+Phase 3 frontend dashboard implementation.
+- React + TypeScript + Vite + TailwindCSS
+- WebSocket client with auto-reconnect
+- Zustand state management
+- 6 dashboard components (telemetry, fuel, tires, pace, alerts, session)
+
 ## Development Workflow
 
 1. **Architecture Phase:** Review Architecture.md and Characterization.md
@@ -66,7 +73,8 @@ docs/
 ├── TELEMETRY_READER.md          # Reader implementation
 ├── MODELS_IMPLEMENTATION.md     # Data models
 ├── MODELS_REFERENCE.md          # Quick reference
-├── IMPLEMENTATION_COMPLETE.md   # Status tracking
+├── IMPLEMENTATION_COMPLETE.md   # Phase 1 status
+├── FRONTEND.md                  # Phase 3 frontend
 └── INDEX.md                     # This file
 ```
 
