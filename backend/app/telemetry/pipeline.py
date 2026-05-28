@@ -87,22 +87,29 @@ class TelemetryPipeline:
 
                     # Update session state
                     session_state = self._session_manager.update(
-                        session_type=raw_data["graphics"]["session_type"],
-                        session_status=raw_data["graphics"]["session_status"],
-                        lap=raw_data["graphics"]["current_lap"],
-                        completed_laps=raw_data["graphics"]["completed_laps"],
+                        session_type=raw_data["graphics"]["session"],
+                        session_status=raw_data["graphics"]["status"],
+                        lap=raw_data["graphics"]["lap"],
+                        completed_laps=raw_data["graphics"]["lap"],
                         position=raw_data["graphics"]["position"],
                         fuel=raw_data["physics"]["fuel"],
                         max_fuel=raw_data["physics"]["max_fuel"],
                         driver=raw_data["static"]["player_name"],
                         car=raw_data["static"]["car_model"],
-                        track=raw_data["static"]["track_name"],
+                        track=raw_data["static"]["track"],
                     )
 
                     # Buffer for broadcast (throttled)
                     if now - last_broadcast >= BROADCAST_INTERVAL:
                         async with self._lock:
                             self._latest_telemetry = telem
+
+                        # Push to broadcaster for WebSocket delivery
+                        from app.websocket.broadcaster import get_broadcaster
+
+                        broadcaster = await get_broadcaster()
+                        await broadcaster.update(telem)
+
                         last_broadcast = now
 
                 # Sleep before next poll
@@ -136,73 +143,109 @@ class TelemetryPipeline:
         graphics_raw = raw_data["graphics"]
         static_raw = raw_data["static"]
 
-        # Create wheel data
+        # Create wheel data from reader's flat array keys
         wheels = [
             WheelData(
-                temperature=physics_raw["wheels"][i]["temperature"],
-                wear=physics_raw["wheels"][i]["wear"],
-                load=physics_raw["wheels"][i]["load"],
-                slip=physics_raw["wheels"][i]["slip"],
-                brake_temperature=physics_raw["wheels"][i]["brake_temperature"],
+                temperature=physics_raw["wheel_temps"][i],
+                wear=physics_raw["wheel_wear"][i],
+                load=physics_raw["wheel_load"][i],
+                slip=physics_raw["wheel_slip_ratio"][i],
+                brake_temperature=physics_raw["brake_temps"][i],
             )
             for i in range(4)
         ]
 
+        # max_rpm not available from reader; approximate from current rpm
+        max_rpm = max(physics_raw["rpm"] * 1.5, 9000.0)
+
         # Create engine data
         engine = EngineData(
             rpm=physics_raw["rpm"],
-            max_rpm=physics_raw["max_rpm"],
+            max_rpm=max_rpm,
             throttle=physics_raw["throttle"],
             brake=physics_raw["brake"],
             clutch=physics_raw["clutch"],
         )
 
+        # Parse lap time from AC string format "M:SS.mmm" or "SS.mmm"
+        lap_time_str = graphics_raw.get("current_time", "")
+        lap_time = 0.0
+        if lap_time_str:
+            try:
+                parts = lap_time_str.split(":")
+                if len(parts) == 2:
+                    lap_time = float(parts[0]) * 60.0 + float(parts[1])
+                else:
+                    lap_time = float(parts[0])
+            except (ValueError, IndexError):
+                lap_time = 0.0
+
+        # Parse split/last sector time from AC string format
+        split_time_str = graphics_raw.get("split_time", "")
+        last_sector_time = 0.0
+        if split_time_str:
+            try:
+                parts = split_time_str.split(":")
+                if len(parts) == 2:
+                    last_sector_time = float(parts[0]) * 60.0 + float(parts[1])
+                else:
+                    last_sector_time = float(parts[0])
+            except (ValueError, IndexError):
+                last_sector_time = 0.0
+
+        # Current lap: 1-based from reader's 0-based completed lap count
+        lap = graphics_raw["lap"]
+        current_lap = lap + 1 if lap > 0 else 1
+
+        # Speed from reader (m/s) — same value used for velocity magnitude
+        speed = physics_raw["speed"]
+
         # Create physics data
         physics = PhysicsData(
-            speed=physics_raw["speed"],
-            velocity_x=physics_raw["velocity_x"],
-            velocity_y=physics_raw["velocity_y"],
-            velocity_z=physics_raw["velocity_z"],
-            acceleration_x=physics_raw["acceleration_x"],
-            acceleration_y=physics_raw["acceleration_y"],
-            acceleration_z=physics_raw["acceleration_z"],
+            speed=speed,
+            velocity_x=0.0,
+            velocity_y=0.0,
+            velocity_z=0.0,
+            acceleration_x=0.0,
+            acceleration_y=0.0,
+            acceleration_z=0.0,
             rpm=physics_raw["rpm"],
             gear=physics_raw["gear"],
             throttle=physics_raw["throttle"],
             brake=physics_raw["brake"],
             handbrake=physics_raw["handbrake"],
-            steering=physics_raw["steering"],
+            steering=physics_raw["steer"],
             fuel=physics_raw["fuel"],
             max_fuel=physics_raw["max_fuel"],
             wheels=wheels,
             engine=engine,
-            velocity=physics_raw["velocity"],
-            g_force=physics_raw["g_force"],
+            velocity=speed,
+            g_force=0.0,
         )
 
         # Create graphics data
         graphics = GraphicsData(
-            session_type=graphics_raw["session_type"],
-            session_status=graphics_raw["session_status"],
-            completed_laps=graphics_raw["completed_laps"],
-            current_lap=graphics_raw["current_lap"],
-            current_sector=graphics_raw["current_sector"],
-            last_sector_time=graphics_raw["last_sector_time"],
-            lap_time=graphics_raw["lap_time"],
+            session_type=graphics_raw["session"],
+            session_status=graphics_raw["status"],
+            completed_laps=graphics_raw["lap"],
+            current_lap=current_lap,
+            current_sector=0,
+            last_sector_time=last_sector_time,
+            lap_time=lap_time,
             position=graphics_raw["position"],
-            num_cars=graphics_raw["num_cars"],
-            fuel_estimate_remaining_laps=graphics_raw["fuel_estimate_remaining_laps"],
-            abs=graphics_raw["abs"],
-            tc=graphics_raw["tc"],
+            num_cars=static_raw.get("number_of_cars", 1),
+            fuel_estimate_remaining_laps=graphics_raw["fuel_remaining"],
+            abs=graphics_raw["abs_level"],
+            tc=graphics_raw["traction_control"],
         )
 
-        # Create static data
+        # Create static data (air/road temp from graphics packet)
         static = StaticData(
             car_model=static_raw["car_model"],
-            track_name=static_raw["track_name"],
+            track_name=static_raw["track"],
             player_name=static_raw["player_name"],
-            air_temp=static_raw["air_temp"],
-            road_temp=static_raw["road_temp"],
+            air_temp=graphics_raw["ambient_temp"],
+            road_temp=graphics_raw["road_temp"],
         )
 
         # Combine into normalized telemetry
