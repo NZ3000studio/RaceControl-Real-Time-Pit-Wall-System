@@ -65,7 +65,7 @@ class SessionManager:
 
         # Detect lap change
         if lap > self._last_lap:
-            logger.info(f"Lap change: {self._last_lap} → {lap}")
+            logger.info(f"Lap change: {self._last_lap} -> {lap}")
             self._last_lap = lap
 
         # Detect session end

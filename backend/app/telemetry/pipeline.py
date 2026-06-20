@@ -71,12 +71,22 @@ class TelemetryPipeline:
         """Main polling loop: read and buffer telemetry.
 
         Runs continuously, polling AC at 100Hz, buffering output.
+        Reconnects automatically when AC starts or restarts.
         """
         last_broadcast = 0.0
+        last_reconnect_attempt = 0.0
+        RECONNECT_INTERVAL = 2.0  # Try reconnect every 2 seconds
 
         try:
             while self._running:
                 now = asyncio.get_event_loop().time()
+
+                # Attempt reconnection if not connected
+                if not await self._reader.is_connected():
+                    if now - last_reconnect_attempt >= RECONNECT_INTERVAL:
+                        logger.debug("Attempting reconnection to AC shared memory...")
+                        await self._reader.connect()
+                        last_reconnect_attempt = now
 
                 # Try to read telemetry
                 raw_data = await self._reader.read()

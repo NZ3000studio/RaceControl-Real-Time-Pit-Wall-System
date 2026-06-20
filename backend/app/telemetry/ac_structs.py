@@ -1,294 +1,242 @@
 """Assetto Corsa shared memory struct definitions.
 
-This module defines the ctypes structures that map to Assetto Corsa's shared
-memory buffers on Windows. These structures are based on the AC telemetry API
-and community-documented offsets.
-
-Shared memory regions:
-  - acpmf_physics: Updated at high frequency (~1000Hz), contains physics data
-  - acpmf_graphics: Updated moderately, contains graphics/session info
-  - acpmf_static: Rarely updated, contains static car/track info
-
-References:
-  - AC Forum: https://www.assettocorsa.net/forum/
-  - Community telemetry docs and reverse-engineered offsets
-  - AC modding documentation
-
-Notes on field layout:
-  - All structures use _pack_ = 1 to match binary memory layout
-  - Wheel arrays are in order: [FL, FR, RL, RR] (Front-Left, Front-Right, etc)
-  - Car arrays in physics are for all cars on track (use focusedCarIndex)
-  - All floating point values are IEEE 754 single precision (32-bit)
+Correct wire-format structs based on simetry crate (Rust #[repr(C, packed(4))]).
+All strings are UTF-16LE wide char arrays ([u16; N] in Rust, c_uint16 * N here).
 """
 
-from ctypes import (
-    Structure,
-    c_float,
-    c_int,
-    c_char,
-    c_ubyte,
-    c_wchar,
-    POINTER,
-    sizeof,
-)
+from ctypes import Structure, c_int32, c_float, c_uint16, sizeof
 from typing import Final
 
-# Define wheel count constant
 WHEELS: Final[int] = 4
+WCHAR_TIME: Final[int] = 15  # Wide chars for lap/clock strings
+WCHAR_TYRE: Final[int] = 33  # Wide chars for compound/name strings
 
 
-class CarPhysics(Structure):
-    """Physics data for a single car in the physics packet."""
+class SPageFilePhysics(Structure):
+    """Physics packet from acpmf_physics — single player car data."""
 
-    _pack_ = 1
+    _pack_ = 4
     _fields_ = [
-        ("speed", c_float),  # m/s
-        ("throttle", c_float),  # 0-1
-        ("steer", c_float),  # -1 to 1 (left/right input)
-        ("brake", c_float),  # 0-1
-        ("clutch", c_float),  # 0-1
-        ("leftBlinker", c_ubyte),  # bool
-        ("rightBlinker", c_ubyte),  # bool
-        ("lights", c_ubyte),  # 0-3 (off, low, high)
-        ("flashingLights", c_ubyte),  # bool
-        ("headlightFlashing", c_ubyte),  # bool
-        ("exhaustFlame", c_ubyte),  # bool
-        ("wiper", c_ubyte),  # bool
-        ("_padding0", c_ubyte * 2),  # padding
-        ("gear", c_int),  # 0=R, 1=N, 2-7=gears
-        ("rpm", c_float),  # RPM
-        ("maxRpm", c_float),  # Max RPM
-        ("maxTorque", c_float),  # Max torque
-        ("brakePressure", c_float),  # Brake pressure
-        ("fuel", c_float),  # Current fuel (liters)
-        ("maxFuel", c_float),  # Max fuel capacity
-        ("fuelPerLap", c_float),  # Fuel consumption per lap
-        ("magnesum", c_ubyte),  # bool (magnesium wheels)
-        ("_padding1", c_ubyte * 3),  # padding
-        ("engineLimiter", c_ubyte),  # bool
-        ("_padding2", c_ubyte * 3),  # padding
-        # Wheel data (4 wheels: FL, FR, RL, RR)
-        ("wheelAngularSpeed", c_float * WHEELS),  # rad/s
-        ("slipAngle", c_float * WHEELS),  # radians
-        ("slipRatio", c_float * WHEELS),  # slip ratio (0-1)
-        ("ndSlip", c_float * WHEELS),  # normalized slip
-        ("load", c_float * WHEELS),  # wheel load (kg)
-        ("temps", c_float * WHEELS),  # wheel temperature (Celsius)
-        ("wear", c_float * WHEELS),  # tire wear (0-1, 1=new)
-        ("pressure", c_float * WHEELS),  # tire pressure (psi)
-        ("tyreCoreTemp", c_float * WHEELS),  # tire core temp (Celsius)
-        ("camber", c_float * WHEELS),  # camber angle (radians)
-        ("suspension", c_float * WHEELS),  # suspension travel
-        ("rideHeight", c_float * WHEELS),  # ride height
-        ("brakeTempK", c_float * WHEELS),  # brake temp (Kelvin)
-        ("brakePad", c_ubyte * WHEELS),  # brake pad material (0-6)
-        ("_padding3", c_ubyte * 4),  # padding to next car
-        ("brakeDiscTemp", c_float * WHEELS),  # brake disc temp (Celsius)
-        ("clutchSlip", c_float),  # clutch slip ratio
-        ("clutchEngaged", c_float),  # clutch engagement (0-1)
-        ("rpmLimiterCut", c_float),  # limiter cut value
-        ("turboBoostLevel", c_float),  # turbo boost level
-        ("airDensity", c_float),  # air density (kg/m^3)
-        ("airTemp", c_float),  # air temperature (Celsius)
-        ("roadTemp", c_float),  # road temperature (Celsius)
-        ("localAngularVelocity", c_float * 3),  # angular velocity (x, y, z)
-        ("finalFF", c_float),  # final force feedback
-        ("performanceMeter", c_float),  # performance meter
-        ("engineBrake", c_int),  # engine braking enabled
-        ("ersRecoveryLevel", c_float),  # ERS recovery level
-        ("ersPowerLevel", c_float),  # ERS power level
-        ("ersHeatCharging", c_float),  # ERS heat charging
-        ("ersIsCharging", c_int),  # ERS is charging
-        ("kersCharge", c_float),  # KERS charge (deprecated in newer AC)
-        ("kersInput", c_float),  # KERS input (deprecated)
-        ("drsAvailable", c_int),  # DRS available
-        ("drsEngaged", c_int),  # DRS engaged
-        ("antilockBrakesEnabled", c_int),  # ABS enabled
-        ("tyreSpeedSmoothing", c_int),  # tyre speed smoothing
-        ("ffEffect", c_float),  # force feedback effect
-        ("slipSpeedKmh", c_float),  # slip speed in km/h
+        ("packet_id", c_int32),
+        ("gas", c_float),
+        ("brake", c_float),
+        ("fuel", c_float),
+        ("gear", c_int32),
+        ("rpm", c_int32),
+        ("steer_angle", c_float),
+        ("speed_kmh", c_float),
+        ("velocity", c_float * 3),
+        ("acc_g", c_float * 3),
+        ("wheel_slip", c_float * WHEELS),
+        ("wheel_load", c_float * WHEELS),
+        ("wheels_pressure", c_float * WHEELS),
+        ("wheel_angular_speed", c_float * WHEELS),
+        ("tyre_wear", c_float * WHEELS),
+        ("tyre_dirty_level", c_float * WHEELS),
+        ("tyre_core_temperature", c_float * WHEELS),
+        ("camber_rad", c_float * WHEELS),
+        ("suspension_travel", c_float * WHEELS),
+        ("drs", c_float),
+        ("tc", c_float),
+        ("heading", c_float),
+        ("pitch", c_float),
+        ("roll", c_float),
+        ("cg_height", c_float),
+        ("car_damage", c_float * 5),
+        ("number_of_tyres_out", c_int32),
+        ("pit_limiter_on", c_int32),
+        ("abs", c_float),
+        ("kers_charge", c_float),
+        ("kers_input", c_float),
+        ("auto_shifter_on", c_int32),
+        ("ride_height", c_float * 2),
+        ("turbo_boost", c_float),
+        ("ballast", c_float),
+        ("air_density", c_float),
+        ("air_temp", c_float),
+        ("road_temp", c_float),
+        ("local_angular_vel", c_float * 3),
+        ("final_ff", c_float),
+        ("performance_meter", c_float),
+        ("engine_brake", c_int32),
+        ("ers_recovery_level", c_int32),
+        ("ers_power_level", c_int32),
+        ("ers_heat_charging", c_int32),
+        ("ers_is_charging", c_int32),
+        ("kers_current_kj", c_float),
+        ("drs_available", c_int32),
+        ("drs_enabled", c_int32),
+        ("brake_temp", c_float * WHEELS),
+        ("clutch", c_float),
+        ("tyre_temp_i", c_float * WHEELS),
+        ("tyre_temp_m", c_float * WHEELS),
+        ("tyre_temp_o", c_float * WHEELS),
+        ("is_ai_controlled", c_int32),
+        ("tyre_contact_point", (c_float * 3) * WHEELS),
+        ("tyre_contact_normal", (c_float * 3) * WHEELS),
+        ("tyre_contact_heading", (c_float * 3) * WHEELS),
+        ("brake_bias", c_float),
+        ("local_velocity", c_float * 3),
+        ("p2p_activations", c_int32),
+        ("p2p_status", c_int32),
+        ("current_max_rpm", c_int32),
+        ("mz", c_float * WHEELS),
+        ("fx", c_float * WHEELS),
+        ("fy", c_float * WHEELS),
+        ("slip_ratio", c_float * WHEELS),
+        ("slip_angle", c_float * WHEELS),
+        ("tc_in_action", c_int32),
+        ("abs_in_action", c_int32),
+        ("suspension_damage", c_float * WHEELS),
+        ("tyre_temp", c_float * WHEELS),
+        ("water_temp", c_float),
+        ("brake_pressure", c_float * WHEELS),
+        ("front_brake_compound", c_int32),
+        ("rear_brake_compound", c_int32),
+        ("pad_life", c_float * WHEELS),
+        ("disc_life", c_float * WHEELS),
+        ("ignition_on", c_int32),
+        ("starter_engine_on", c_int32),
+        ("is_engine_running", c_int32),
+        ("kerb_vibration", c_float),
+        ("slip_vibrations", c_float),
+        ("g_vibrations", c_float),
+        ("abs_vibrations", c_float),
     ]
 
 
-class PhysicsPacket(Structure):
-    """Complete physics packet from acpmf_physics shared memory.
+class SPageFileGraphic(Structure):
+    """Graphics/session packet from acpmf_graphics."""
 
-    This structure is updated frequently (100Hz+) and contains all physics
-    data for all cars on track. Typically ~11KB in size.
-
-    Estimated size for modern AC: ~12,000-14,000 bytes depending on car count.
-    """
-
-    _pack_ = 1
+    _pack_ = 4
     _fields_ = [
-        ("nbCars", c_int),  # Number of cars
-        ("focusedCarIndex", c_int),  # Index of player car
-        ("activeCars", c_int),  # Number of active cars
-        ("_padding", c_ubyte * 60),  # Reserved/padding to reach offset 72
-        ("carData", CarPhysics * 64),  # Up to 64 cars of data
+        ("packet_id", c_int32),
+        ("status", c_int32),  # 0=off, 1=replay, 2=live, 3=paused
+        ("session", c_int32),  # 0=practice, 1=qualify, 2=race, ...
+        ("current_time", c_uint16 * WCHAR_TIME),
+        ("last_time", c_uint16 * WCHAR_TIME),
+        ("best_time", c_uint16 * WCHAR_TIME),
+        ("split", c_uint16 * WCHAR_TIME),
+        ("completed_laps", c_int32),
+        ("position", c_int32),
+        ("i_current_time", c_int32),
+        ("i_last_time", c_int32),
+        ("i_best_time", c_int32),
+        ("session_time_left", c_float),
+        ("distance_traveled", c_float),
+        ("is_in_pit", c_int32),
+        ("current_sector_index", c_int32),
+        ("last_sector_time", c_int32),
+        ("number_of_laps", c_int32),
+        ("tyre_compound", c_uint16 * WCHAR_TYRE),
+        ("replay_time_multiplier", c_float),
+        ("normalized_car_position", c_float),
+        ("active_cars", c_int32),
+        ("car_coordinates", (c_float * 3) * 60),
+        ("car_id", c_int32 * 60),
+        ("player_car_id", c_int32),
+        ("penalty_time", c_float),
+        ("flag", c_int32),
+        ("penalty", c_int32),
+        ("ideal_line_on", c_int32),
+        ("is_in_pit_lane", c_int32),
+        ("surface_grip", c_float),
+        ("mandatory_pit_done", c_int32),
+        ("wind_speed", c_float),
+        ("wind_direction", c_float),
+        ("is_setup_menu_visible", c_int32),
+        ("main_display_index", c_int32),
+        ("secondary_display_index", c_int32),
+        ("tc", c_int32),
+        ("tc_cut", c_int32),
+        ("engine_map", c_int32),
+        ("abs", c_int32),
+        ("fuel_used_per_lap", c_float),
+        ("rain_lights", c_int32),
+        ("flashing_lights", c_int32),
+        ("lights_stage", c_int32),
+        ("exhaust_temperature", c_float),
+        ("wiper_lv", c_int32),
+        ("driver_stint_total_time_left", c_int32),
+        ("driver_stint_time_left", c_int32),
+        ("rain_tyres", c_int32),
+        ("session_index", c_int32),
+        ("used_fuel", c_float),
+        ("delta_lap_time", c_uint16 * WCHAR_TIME),
+        ("i_delta_lap_time", c_int32),
+        ("estimated_lap_time", c_uint16 * WCHAR_TIME),
+        ("i_estimated_lap_time", c_int32),
+        ("is_delta_positive", c_int32),
+        ("i_split", c_int32),
+        ("is_valid_lap", c_int32),
+        ("fuel_estimated_laps", c_float),
+        ("track_status", c_uint16 * WCHAR_TYRE),
+        ("missing_mandatory_pits", c_int32),
+        ("clock", c_float),
+        ("direction_lights_left", c_int32),
+        ("direction_lights_right", c_int32),
     ]
 
 
-class GraphicsPacket(Structure):
-    """Graphics/session packet from acpmf_graphics shared memory.
+class SPageFileStatic(Structure):
+    """Static info packet from acpmf_static."""
 
-    Contains session-level info (laps, position, status) and graphics
-    settings. Updated less frequently than physics (~60Hz).
-
-    Size: ~10KB
-    """
-
-    _pack_ = 1
+    _pack_ = 4
     _fields_ = [
-        ("packetId", c_int),  # Packet sequence ID
-        ("status", c_int),  # 0=off, 1=replay, 2=live, 3=paused
-        ("session", c_int),  # 0=practice, 1=qualify, 2=race, 3=hotlap, 4=time attack, 5=drift, 6=drag
-        ("currentTime", c_char * 15),  # HH:MM:SS.mmm
-        ("lastTime", c_char * 15),  # Last lap time
-        ("bestTime", c_char * 15),  # Best lap time
-        ("split", c_char * 15),  # Sector split time
-        ("completedLaps", c_int),  # Completed laps
-        ("position", c_int),  # Position in grid/race
-        ("iCurrentTime", c_int),  # Current time in milliseconds
-        ("iLastTime", c_int),  # Last lap time in milliseconds
-        ("iBestTime", c_int),  # Best lap time in milliseconds
-        ("sessionTimeLeft", c_float),  # Session time remaining (seconds)
-        ("sessionTimeLeftDouble", c_float),  # Double precision time left
-        ("sessionTimeTotal", c_float),  # Total session time
-        ("isLapValid", c_int),  # Is current lap valid
-        ("fuelXLap", c_float),  # Fuel remaining (estimated laps)
-        ("rainLights", c_int),  # Rain lights on (bool)
-        ("rainTyres", c_int),  # Rain tires equipped (bool)
-        ("ambientTemp", c_float),  # Ambient temperature (Celsius)
-        ("roadTemp", c_float),  # Road temperature (Celsius)
-        ("bulletPoints", c_int),  # Bullet points for penalty
-        ("crashState", c_int),  # Crash state
-        ("numberOfTyresOut", c_int),  # Number of tires out of track
-        ("lapInvalidated", c_int),  # Is lap invalidated
-        ("maxContact", c_int),  # Max contact
-        ("maxContactsPerLap", c_int),  # Max contacts per lap
-        ("trackGripLevel", c_float),  # Track grip level
-        ("isSetupMenuVisible", c_int),  # Setup menu visible
-        ("mainDisplayIndex", c_int),  # Main display index
-        ("secondaryDisplayIndex", c_int),  # Secondary display index
-        ("tc", c_int),  # Traction control level
-        ("tcCut", c_int),  # TC cut level
-        ("engineMap", c_int),  # Engine map
-        ("abs", c_int),  # ABS level
-        ("fuelUsePerLap", c_float),  # Fuel consumption per lap (liters)
-        ("radiationTemp", c_float),  # Radiation temperature
-        ("ambientRadiation", c_float),  # Ambient radiation
-        ("engineTemp", c_float),  # Engine temperature (Celsius)
-        ("waterTemp", c_float),  # Water temperature (Celsius)
-        ("brakeTemp", c_float),  # Brake temperature (Celsius)
-        ("clutch", c_float),  # Clutch
-        ("currentMaxRpm", c_int),  # Current max RPM
-        ("mz", c_float),  # Magic number (not used)
-        ("n2o", c_float),  # N2O (laughing gas)
-        ("turboBoost", c_float),  # Turbo boost
-        ("airDensity", c_float),  # Air density
-        ("airTemp", c_float),  # Air temperature
-        ("roadTemp2", c_float),  # Road temperature 2
-        ("localAngularVelocity", c_float * 3),  # Local angular velocity
-        ("finalFF", c_float),  # Final force feedback
-        ("performanceMeter", c_float),  # Performance meter value
-        ("engineBrake", c_int),  # Engine brake
-        ("ersRecoveryLevel", c_float),  # ERS recovery level
-        ("ersPowerLevel", c_float),  # ERS power level
-        ("ersHeatCharging", c_float),  # ERS heat charging
-        ("ersIsCharging", c_int),  # ERS is charging
-        ("kersCharge", c_float),  # KERS charge
-        ("kersInput", c_float),  # KERS input
-        ("drsAvailable", c_int),  # DRS available
-        ("drsEngaged", c_int),  # DRS engaged
-        ("ignitionStarted", c_int),  # Ignition started
-        ("brakesFirstApplied", c_int),  # Brakes first applied
-        ("gearSelectionActive", c_int),  # Gear selection active
-        ("differentialSwitch", c_int),  # Differential switch
-        ("antiLockBrakes", c_int),  # Anti-lock brakes
-        ("engineLimiter", c_int),  # Engine limiter
-        ("currentGear", c_int),  # Current gear (0=N, 1-6=gears)
-        ("pitLimiterOn", c_int),  # Pit limiter on
-        ("abs", c_int),  # ABS (repeated field - actual layout may vary)
-        ("turboSpinRate", c_float),  # Turbo spin rate
-        ("turboAngularVelocity", c_float),  # Turbo angular velocity
-        ("turboBoostAmount", c_float),  # Turbo boost amount
-        ("airBumpSpeedFront", c_float),  # Air bump speed front
-        ("airBumpSpeedRear", c_float),  # Air bump speed rear
-        ("aeroDamage", c_float),  # Aero damage
-        ("engineDamage", c_float),  # Engine damage
+        ("sm_version", c_uint16 * WCHAR_TIME),
+        ("ac_version", c_uint16 * WCHAR_TIME),
+        ("number_of_sessions", c_int32),
+        ("num_cars", c_int32),
+        ("car_model", c_uint16 * WCHAR_TYRE),
+        ("track", c_uint16 * WCHAR_TYRE),
+        ("player_name", c_uint16 * WCHAR_TYRE),
+        ("player_surname", c_uint16 * WCHAR_TYRE),
+        ("player_nick", c_uint16 * WCHAR_TYRE),
+        ("sector_count", c_int32),
+        ("max_torque", c_float),
+        ("max_power", c_float),
+        ("max_rpm", c_int32),
+        ("max_fuel", c_float),
+        ("suspension_max_travel", c_float * WHEELS),
+        ("tyre_radius", c_float * WHEELS),
+        ("max_turbo_boost", c_float),
+        ("deprecated_1", c_float),
+        ("deprecated_2", c_float),
+        ("penalties_enabled", c_int32),
+        ("aid_fuel_rate", c_float),
+        ("aid_tire_rate", c_float),
+        ("aid_mechanical_damage", c_float),
+        ("aid_allow_tyre_blankets", c_int32),
+        ("aid_stability", c_float),
+        ("aid_auto_clutch", c_int32),
+        ("aid_auto_blip", c_int32),
+        ("has_drs", c_int32),
+        ("has_ers", c_int32),
+        ("has_kers", c_int32),
+        ("kers_max_j", c_float),
+        ("engine_brake_settings_count", c_int32),
+        ("ers_power_controller_count", c_int32),
+        ("track_spline_length", c_float),
+        ("track_configuration", c_uint16 * WCHAR_TYRE),
+        ("ers_max_j", c_float),
+        ("is_timed_race", c_int32),
+        ("has_extra_lap", c_int32),
+        ("car_skin", c_uint16 * WCHAR_TYRE),
+        ("reversed_grid_positions", c_int32),
+        ("pit_window_start", c_int32),
+        ("pit_window_end", c_int32),
+        ("is_online", c_int32),
     ]
 
 
-class StaticPacket(Structure):
-    """Static info packet from acpmf_static shared memory.
-
-    Contains static information that rarely changes during a session:
-    car model, track, driver name, setup file, etc.
-
-    Size: ~5-10KB
-    """
-
-    _pack_ = 1
-    _fields_ = [
-        ("smVersion", c_int),  # Shared memory version
-        ("acVersion", c_int),  # AC version
-        ("numberOfSessions", c_int),  # Number of sessions
-        ("numberOfCars", c_int),  # Number of cars
-        ("carModel", c_char * 64),  # Car model name (e.g., "ferrari_sf90")
-        ("track", c_char * 64),  # Track name (e.g., "monza")
-        ("playerName", c_char * 64),  # Player/driver name
-        ("playerSurname", c_char * 64),  # Player surname
-        ("playerNick", c_char * 64),  # Player nickname
-        ("sectorCount", c_int),  # Number of sectors
-        ("_padding", c_ubyte * 256),  # Padding for future expansion
-        ("maxBrakeBias", c_float),  # Max brake bias
-        ("fuel", c_float),  # Fuel
-        ("maxFuel", c_float),  # Max fuel
-        ("penaltiesEnabled", c_int),  # Penalties enabled
-        ("aidFuelRate", c_float),  # Fuel aid rate
-        ("aidTireRate", c_float),  # Tire wear aid rate
-        ("aidMechanicalDamage", c_float),  # Mechanical damage aid
-        ("aidAllowTraction", c_int),  # Allow traction control
-        ("aidAllowAbs", c_int),  # Allow anti-lock brakes
-        ("aidAllowStabilityControl", c_int),  # Allow stability control
-        ("aidForceClosedDifferential", c_int),  # Force closed differential
-        ("aidAutoClutch", c_int),  # Auto clutch
-        ("aidAutoBlip", c_int),  # Auto blip
-        ("hasDRS", c_int),  # Has DRS
-        ("hasERS", c_int),  # Has ERS
-        ("hasKERS", c_int),  # Has KERS
-        ("kersMaxJ", c_float),  # KERS max joules
-        ("hasHRS", c_int),  # Has hydraulic recovery system
-        ("brakeTorque", c_float),  # Brake torque
-        ("brakeBias", c_float),  # Brake bias
-        # Track info
-        ("trackSPlineLength", c_float),  # Track spline length (meters)
-        ("trackConfiguration", c_char * 64),  # Track configuration
-        ("ersMaxPower", c_float),  # ERS max power
-        ("ersDeployWindow", c_int),  # ERS deploy window
-        ("hybridType", c_int),  # Hybrid type
-        ("isTimedSession", c_int),  # Is timed session
-        ("hasExtraLap", c_int),  # Has extra lap
-        ("carSkinNumber", c_int),  # Car skin number
-        ("seriesSkinNumber", c_int),  # Series skin number
-        ("saturationLevel", c_float),  # Saturation level
-        ("formationLapType", c_int),  # Formation lap type
-        ("autoShiftGears", c_int),  # Auto shift gears
-        ("autoShiftSpecialGear", c_int),  # Auto shift special gear
-        ("useCustomSetup", c_int),  # Use custom setup
-    ]
+def wchar_to_str(arr) -> str:
+    """Decode a c_uint16 array (UTF-16LE) to a Python string."""
+    return bytes(arr).decode("utf-16-le", errors="ignore").rstrip("\x00")
 
 
-# Helper function to get struct sizes
 def get_struct_sizes() -> dict[str, int]:
-    """Return the byte sizes of all struct types.
-
-    Useful for validation and debugging.
-    """
     return {
-        "PhysicsPacket": sizeof(PhysicsPacket),
-        "GraphicsPacket": sizeof(GraphicsPacket),
-        "StaticPacket": sizeof(StaticPacket),
-        "CarPhysics": sizeof(CarPhysics),
+        "Physics": sizeof(SPageFilePhysics),
+        "Graphics": sizeof(SPageFileGraphic),
+        "Static": sizeof(SPageFileStatic),
     }
