@@ -1,9 +1,15 @@
 import { useTelemetrySocket } from "./hooks/useTelemetrySocket";
 import { useTelemetryStore } from "./store/telemetryStore";
 import SessionHeader from "./components/SessionHeader";
+import RaceStatusStrip from "./components/RaceStatusStrip";
 import TelemetryOverview from "./components/TelemetryOverview";
+import SteeringGauge from "./components/SteeringGauge";
+import GForceMeter from "./components/GForceMeter";
 import FuelWidget from "./components/FuelWidget";
+import ERSBattery from "./components/ERSBattery";
 import TirePanel from "./components/TirePanel";
+import BrakePanel from "./components/BrakePanel";
+import DamagePanel from "./components/DamagePanel";
 import PaceGraph from "./components/PaceGraph";
 import AlertsPanel from "./components/AlertsPanel";
 
@@ -33,23 +39,35 @@ function App() {
         {/* Session header — full width */}
         <SessionHeader />
 
+        {/* Race status strip — full width */}
+        <RaceStatusStrip />
+
         {/* Main grid: 3 columns */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Left column: overview + alerts */}
+          {/* Left column: primary telemetry + G-force */}
           <div className="space-y-4">
             <TelemetryOverview />
+            <GForceMeter />
+          </div>
+
+          {/* Center column: steering + pace + alerts */}
+          <div className="space-y-4">
+            <SteeringGauge />
+            <PaceGraph />
             <AlertsPanel />
           </div>
 
-          {/* Center column: pace graph (spans taller) */}
-          <PaceGraph />
-
-          {/* Right column: fuel + tires */}
+          {/* Right column: fuel + ERS + brakes + damage */}
           <div className="space-y-4">
             <FuelWidget />
-            <TirePanel />
+            <ERSBattery />
+            <BrakePanel />
+            <DamagePanel />
           </div>
         </div>
+
+        {/* Tire panel — full width for detailed per-tire data */}
+        <TirePanel />
       </div>
     </div>
   );

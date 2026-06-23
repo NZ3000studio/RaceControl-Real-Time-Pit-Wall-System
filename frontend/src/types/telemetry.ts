@@ -6,6 +6,17 @@ export interface WheelData {
   load: number;
   slip: number;
   brake_temperature: number;
+  pressure: number;
+  tire_core_temp: number;
+  temp_inner: number;
+  temp_middle: number;
+  temp_outer: number;
+  brake_pressure: number;
+  pad_life: number;
+  disc_life: number;
+  tyre_force_x: number;
+  tyre_force_y: number;
+  self_aligning_torque: number;
 }
 
 export interface EngineData {
@@ -14,6 +25,11 @@ export interface EngineData {
   throttle: number;
   brake: number;
   clutch: number;
+  kers_charge: number;
+  kers_current_kj: number;
+  ers_power_level: number;
+  ers_recovery_level: number;
+  ers_is_charging: boolean;
 }
 
 export interface PhysicsData {
@@ -36,6 +52,12 @@ export interface PhysicsData {
   engine: EngineData;
   velocity: number;
   g_force: number;
+  heading: number;
+  pitch: number;
+  roll: number;
+  car_damage: number[];
+  suspension_damage: number[];
+  brake_bias: number;
 }
 
 export interface GraphicsData {
@@ -51,6 +73,28 @@ export interface GraphicsData {
   fuel_estimate_remaining_laps: number;
   abs: number;
   tc: number;
+  track_grip_level: number;
+  drs_available: boolean;
+  drs_engaged: boolean;
+  tc_in_action: boolean;
+  abs_in_action: boolean;
+  rain_lights: boolean;
+  rain_tires: boolean;
+  wind_speed: number;
+  wind_direction: number;
+  flag: number;
+  pit_limiter: boolean;
+  tyre_compound: string;
+  delta_lap_time: number;
+  is_delta_positive: boolean;
+  fuel_used_per_lap: number;
+  penalty_time: number;
+  penalty: number;
+  stint_time_left: number;
+  number_of_laps: number;
+  tc_cut: number;
+  clock: number;
+  mandatory_pit_done: boolean;
 }
 
 export interface StaticData {
@@ -59,6 +103,13 @@ export interface StaticData {
   player_name: string;
   air_temp: number;
   road_temp: number;
+  pit_window_start: number;
+  pit_window_end: number;
+  max_power: number;
+  max_torque: number;
+  kers_max_j: number;
+  ers_max_j: number;
+  is_timed_race: boolean;
 }
 
 export interface NormalizedTelemetry {
@@ -85,3 +136,21 @@ export const SESSION_STATUS_LABELS: Record<number, string> = {
   2: "Live",
   3: "Paused",
 };
+
+/** Track flag labels */
+export const FLAG_LABELS: Record<number, string> = {
+  0: "Green",
+  1: "Yellow",
+  2: "Blue",
+  3: "White",
+  4: "Checkered",
+};
+
+/** Damage zone labels */
+export const DAMAGE_ZONE_LABELS = [
+  "Body",
+  "Engine",
+  "Aero",
+  "Susp F",
+  "Susp R",
+] as const;

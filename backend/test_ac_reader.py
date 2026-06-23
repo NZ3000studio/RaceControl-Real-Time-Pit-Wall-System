@@ -8,10 +8,9 @@ Or run directly: python test_ac_reader.py
 import asyncio
 import sys
 from app.telemetry.ac_structs import (
-    PhysicsPacket,
-    GraphicsPacket,
-    StaticPacket,
-    CarPhysics,
+    SPageFilePhysics,
+    SPageFileGraphic,
+    SPageFileStatic,
     get_struct_sizes,
 )
 from app.telemetry.reader import AsyncACReader
@@ -24,12 +23,15 @@ def test_struct_sizes():
     for name, size in sizes.items():
         print(f"{name}: {size} bytes")
 
-    # Physics packet should be fairly large (multiple cars)
-    assert sizes["PhysicsPacket"] > 10000, "PhysicsPacket too small"
-    # Graphics packet should be smaller
-    assert sizes["GraphicsPacket"] < 1000, "GraphicsPacket too large"
-    # Static packet should be small
-    assert sizes["StaticPacket"] < 2000, "StaticPacket too large"
+    # Physics packet - flat struct, ~800 bytes
+    assert sizes["Physics"] > 500, "Physics too small"
+    assert sizes["Physics"] < 2000, "Physics too large"
+    # Graphics packet - larger with 60 car coordinates, ~1500 bytes
+    assert sizes["Graphics"] > 500, "Graphics too small"
+    assert sizes["Graphics"] < 5000, "Graphics too large"
+    # Static packet - car/track/player names as wide strings, ~688 bytes
+    assert sizes["Static"] > 500, "Static too small"
+    assert sizes["Static"] < 2000, "Static too large"
     print("✓ Struct sizes are reasonable")
 
 
@@ -37,38 +39,56 @@ def test_struct_fields():
     """Test that all expected fields exist in structs."""
     print("\n=== Struct Fields ===")
 
-    # Check PhysicsPacket has main fields
-    physics_fields = [f[0] for f in PhysicsPacket._fields_]
-    assert "nbCars" in physics_fields, "Missing nbCars"
-    assert "focusedCarIndex" in physics_fields, "Missing focusedCarIndex"
-    assert "carData" in physics_fields, "Missing carData"
-    print("✓ PhysicsPacket has required fields")
+    # Check SPageFilePhysics has main fields
+    physics_fields = [f[0] for f in SPageFilePhysics._fields_]
+    assert "speed_kmh" in physics_fields, "Missing speed_kmh"
+    assert "rpm" in physics_fields, "Missing rpm"
+    assert "gear" in physics_fields, "Missing gear"
+    assert "gas" in physics_fields, "Missing gas"
+    assert "brake" in physics_fields, "Missing brake"
+    assert "fuel" in physics_fields, "Missing fuel"
+    assert "velocity" in physics_fields, "Missing velocity"
+    assert "acc_g" in physics_fields, "Missing acc_g"
+    assert "steer_angle" in physics_fields, "Missing steer_angle"
+    assert "clutch" in physics_fields, "Missing clutch"
+    assert "tyre_temp" in physics_fields, "Missing tyre_temp"
+    assert "tyre_wear" in physics_fields, "Missing tyre_wear"
+    assert "air_temp" in physics_fields, "Missing air_temp"
+    assert "road_temp" in physics_fields, "Missing road_temp"
+    assert "drs_available" in physics_fields, "Missing drs_available"
+    assert "drs_enabled" in physics_fields, "Missing drs_enabled"
+    assert "current_max_rpm" in physics_fields, "Missing current_max_rpm"
+    assert "tc_in_action" in physics_fields, "Missing tc_in_action"
+    assert "abs_in_action" in physics_fields, "Missing abs_in_action"
+    print("✓ SPageFilePhysics has required fields")
 
-    # Check CarPhysics has main fields
-    car_fields = [f[0] for f in CarPhysics._fields_]
-    assert "speed" in car_fields, "Missing speed"
-    assert "rpm" in car_fields, "Missing rpm"
-    assert "gear" in car_fields, "Missing gear"
-    assert "throttle" in car_fields, "Missing throttle"
-    assert "brake" in car_fields, "Missing brake"
-    assert "fuel" in car_fields, "Missing fuel"
-    assert "wheelAngularSpeed" in car_fields, "Missing wheelAngularSpeed"
-    print("✓ CarPhysics has required fields")
-
-    # Check GraphicsPacket has main fields
-    graphics_fields = [f[0] for f in GraphicsPacket._fields_]
+    # Check SPageFileGraphic has main fields
+    graphics_fields = [f[0] for f in SPageFileGraphic._fields_]
     assert "status" in graphics_fields, "Missing status"
     assert "session" in graphics_fields, "Missing session"
-    assert "completedLaps" in graphics_fields, "Missing completedLaps"
+    assert "completed_laps" in graphics_fields, "Missing completed_laps"
     assert "position" in graphics_fields, "Missing position"
-    print("✓ GraphicsPacket has required fields")
+    assert "current_sector_index" in graphics_fields, "Missing current_sector_index"
+    assert "surface_grip" in graphics_fields, "Missing surface_grip"
+    assert "rain_lights" in graphics_fields, "Missing rain_lights"
+    assert "rain_tyres" in graphics_fields, "Missing rain_tyres"
+    assert "wind_speed" in graphics_fields, "Missing wind_speed"
+    assert "wind_direction" in graphics_fields, "Missing wind_direction"
+    assert "flag" in graphics_fields, "Missing flag"
+    assert "is_in_pit_lane" in graphics_fields, "Missing is_in_pit_lane"
+    assert "tyre_compound" in graphics_fields, "Missing tyre_compound"
+    print("✓ SPageFileGraphic has required fields")
 
-    # Check StaticPacket has main fields
-    static_fields = [f[0] for f in StaticPacket._fields_]
-    assert "carModel" in static_fields, "Missing carModel"
+    # Check SPageFileStatic has main fields
+    static_fields = [f[0] for f in SPageFileStatic._fields_]
+    assert "car_model" in static_fields, "Missing car_model"
     assert "track" in static_fields, "Missing track"
-    assert "playerName" in static_fields, "Missing playerName"
-    print("✓ StaticPacket has required fields")
+    assert "player_name" in static_fields, "Missing player_name"
+    assert "max_fuel" in static_fields, "Missing max_fuel"
+    assert "max_rpm" in static_fields, "Missing max_rpm"
+    assert "max_power" in static_fields, "Missing max_power"
+    assert "max_torque" in static_fields, "Missing max_torque"
+    print("✓ SPageFileStatic has required fields")
 
 
 async def test_reader_initialization():
@@ -108,19 +128,24 @@ async def test_reader_telemetry_format():
     """Test that telemetry dict has expected format."""
     print("\n=== Telemetry Format ===")
 
-    # Create mock telemetry structure
     expected_physics_keys = {
-        "speed",
-        "rpm",
-        "gear",
-        "throttle",
-        "brake",
-        "fuel",
-        "wheel_temps",
-        "brake_temps",
+        "speed", "rpm", "gear", "throttle", "brake", "clutch",
+        "fuel", "steer", "velocity", "acc_g",
+        "wheel_temps", "wheel_wear", "wheel_load", "wheel_pressure",
+        "tire_core_temps", "brake_temps", "wheel_slip_ratio", "wheel_slip_angle",
+        "drs_available", "drs_engaged", "tc_in_action", "abs_in_action",
+        "air_temp", "road_temp", "current_max_rpm",
     }
-    expected_graphics_keys = {"status", "session", "lap", "position"}
-    expected_static_keys = {"car_model", "track", "player_name"}
+    expected_graphics_keys = {
+        "status", "session", "lap", "position",
+        "current_sector_index", "track_grip_level",
+        "rain_lights", "rain_tires", "wind_speed", "wind_direction",
+        "flag", "pit_limiter", "tyre_compound",
+    }
+    expected_static_keys = {
+        "car_model", "track", "player_name",
+        "max_fuel", "max_rpm", "max_power", "max_torque",
+    }
 
     print(f"  Expected physics keys: {expected_physics_keys}")
     print(f"  Expected graphics keys: {expected_graphics_keys}")

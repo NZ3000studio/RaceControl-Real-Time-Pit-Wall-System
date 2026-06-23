@@ -132,7 +132,7 @@ class TelemetryPipeline:
         finally:
             self._running = False
 
-    async def _normalize(self, raw_data: dict) -> NormalizedTelemetry:
+        async def _normalize(self, raw_data: dict) -> NormalizedTelemetry:
         """Normalize raw AC data to NormalizedTelemetry.
 
         Args:
@@ -141,6 +141,8 @@ class TelemetryPipeline:
         Returns:
             NormalizedTelemetry model
         """
+        from math import sqrt
+
         from app.models.telemetry import (
             PhysicsData,
             GraphicsData,
@@ -153,7 +155,7 @@ class TelemetryPipeline:
         graphics_raw = raw_data["graphics"]
         static_raw = raw_data["static"]
 
-        # Create wheel data from reader's flat array keys
+        # Create wheel data with 3-layer temps, brake detail, tire forces
         wheels = [
             WheelData(
                 temperature=physics_raw["wheel_temps"][i],
@@ -161,20 +163,39 @@ class TelemetryPipeline:
                 load=physics_raw["wheel_load"][i],
                 slip=physics_raw["wheel_slip_ratio"][i],
                 brake_temperature=physics_raw["brake_temps"][i],
+                pressure=physics_raw["wheel_pressure"][i],
+                tire_core_temp=physics_raw["tire_core_temps"][i],
+                temp_inner=physics_raw.get("tyre_temp_inner", [0, 0, 0, 0])[i],
+                temp_middle=physics_raw.get("tyre_temp_middle", [0, 0, 0, 0])[i],
+                temp_outer=physics_raw.get("tyre_temp_outer", [0, 0, 0, 0])[i],
+                brake_pressure=physics_raw.get("brake_pressure", [0, 0, 0, 0])[i],
+                pad_life=physics_raw.get("pad_life", [0, 0, 0, 0])[i],
+                disc_life=physics_raw.get("disc_life", [0, 0, 0, 0])[i],
+                tyre_force_x=physics_raw.get("tyre_force_x", [0, 0, 0, 0])[i],
+                tyre_force_y=physics_raw.get("tyre_force_y", [0, 0, 0, 0])[i],
+                self_aligning_torque=physics_raw.get("self_aligning_torque", [0, 0, 0, 0])[i],
             )
             for i in range(4)
         ]
 
-        # max_rpm not available from reader; approximate from current rpm
-        max_rpm = max(physics_raw["rpm"] * 1.5, 9000.0)
+        # max_rpm: use real value from static struct, fall back to estimate
+        max_rpm = float(
+            static_raw.get("max_rpm", 0)
+            or max(physics_raw["rpm"] * 1.5, 9000.0)
+        )
 
-        # Create engine data
+        # Create engine data with ERS/KERS
         engine = EngineData(
             rpm=physics_raw["rpm"],
             max_rpm=max_rpm,
             throttle=physics_raw["throttle"],
             brake=physics_raw["brake"],
             clutch=physics_raw["clutch"],
+            kers_charge=physics_raw.get("kers_charge", 0.0),
+            kers_current_kj=physics_raw.get("kers_current_kj", 0.0),
+            ers_power_level=physics_raw.get("ers_power_level", 0),
+            ers_recovery_level=physics_raw.get("ers_recovery_level", 0),
+            ers_is_charging=bool(physics_raw.get("ers_is_charging", 0)),
         )
 
         # Parse lap time from AC string format "M:SS.mmm" or "SS.mmm"
@@ -190,56 +211,75 @@ class TelemetryPipeline:
             except (ValueError, IndexError):
                 lap_time = 0.0
 
-        # Parse split/last sector time from AC string format
-        split_time_str = graphics_raw.get("split_time", "")
-        last_sector_time = 0.0
-        if split_time_str:
-            try:
-                parts = split_time_str.split(":")
-                if len(parts) == 2:
-                    last_sector_time = float(parts[0]) * 60.0 + float(parts[1])
-                else:
-                    last_sector_time = float(parts[0])
-            except (ValueError, IndexError):
-                last_sector_time = 0.0
+        # Use millisecond-precision last sector time if available
+        last_sector_ms = graphics_raw.get("last_sector_time", 0)
+        last_sector_time = float(last_sector_ms) / 1000.0 if last_sector_ms else 0.0
+
+        # If we didn't get ms value, fall back to parsing the string
+        if last_sector_time == 0.0:
+            split_time_str = graphics_raw.get("split_time", "")
+            if split_time_str:
+                try:
+                    parts = split_time_str.split(":")
+                    if len(parts) == 2:
+                        last_sector_time = float(parts[0]) * 60.0 + float(parts[1])
+                    else:
+                        last_sector_time = float(parts[0])
+                except (ValueError, IndexError):
+                    last_sector_time = 0.0
 
         # Current lap: 1-based from reader's 0-based completed lap count
         lap = graphics_raw["lap"]
         current_lap = lap + 1 if lap > 0 else 1
 
-        # Speed from reader (m/s) — same value used for velocity magnitude
+        # Speed from reader (m/s)
         speed = physics_raw["speed"]
 
-        # Create physics data
+        # Real 3D velocity from AC
+        vel = physics_raw.get("velocity", [0.0, 0.0, 0.0])
+        vx, vy, vz = float(vel[0]), float(vel[1]), float(vel[2])
+
+        # Real 3D acceleration (G-force) from AC
+        acc = physics_raw.get("acc_g", [0.0, 0.0, 0.0])
+        ax, ay, az = float(acc[0]), float(acc[1]), float(acc[2])
+        g_force = sqrt(ax * ax + ay * ay + az * az)
+
+        # Create physics data with orientation, damage, brake bias
         physics = PhysicsData(
             speed=speed,
-            velocity_x=0.0,
-            velocity_y=0.0,
-            velocity_z=0.0,
-            acceleration_x=0.0,
-            acceleration_y=0.0,
-            acceleration_z=0.0,
+            velocity_x=vx,
+            velocity_y=vy,
+            velocity_z=vz,
+            acceleration_x=ax,
+            acceleration_y=ay,
+            acceleration_z=az,
             rpm=physics_raw["rpm"],
             gear=physics_raw["gear"],
             throttle=physics_raw["throttle"],
             brake=physics_raw["brake"],
-            handbrake=physics_raw["handbrake"],
+            handbrake=physics_raw.get("handbrake", 0.0),
             steering=physics_raw["steer"],
             fuel=physics_raw["fuel"],
-            max_fuel=physics_raw["max_fuel"],
+            max_fuel=static_raw.get("max_fuel", 0.0),
             wheels=wheels,
             engine=engine,
             velocity=speed,
-            g_force=0.0,
+            g_force=g_force,
+            heading=physics_raw.get("heading", 0.0),
+            pitch=physics_raw.get("pitch", 0.0),
+            roll=physics_raw.get("roll", 0.0),
+            car_damage=physics_raw.get("car_damage", [0.0, 0.0, 0.0, 0.0, 0.0]),
+            suspension_damage=physics_raw.get("suspension_damage", [0.0, 0.0, 0.0, 0.0]),
+            brake_bias=physics_raw.get("brake_bias", 0.0),
         )
 
-        # Create graphics data
+        # Create graphics data with delta, fuel rate, penalties, stint
         graphics = GraphicsData(
             session_type=graphics_raw["session"],
             session_status=graphics_raw["status"],
             completed_laps=graphics_raw["lap"],
             current_lap=current_lap,
-            current_sector=0,
+            current_sector=graphics_raw.get("current_sector_index", 0),
             last_sector_time=last_sector_time,
             lap_time=lap_time,
             position=graphics_raw["position"],
@@ -247,15 +287,44 @@ class TelemetryPipeline:
             fuel_estimate_remaining_laps=graphics_raw["fuel_remaining"],
             abs=graphics_raw["abs_level"],
             tc=graphics_raw["traction_control"],
+            track_grip_level=graphics_raw.get("track_grip_level", 1.0),
+            drs_available=physics_raw.get("drs_available", False),
+            drs_engaged=physics_raw.get("drs_engaged", False),
+            tc_in_action=physics_raw.get("tc_in_action", False),
+            abs_in_action=physics_raw.get("abs_in_action", False),
+            rain_lights=graphics_raw.get("rain_lights", False),
+            rain_tires=graphics_raw.get("rain_tires", False),
+            wind_speed=graphics_raw.get("wind_speed", 0.0),
+            wind_direction=graphics_raw.get("wind_direction", 0.0),
+            flag=graphics_raw.get("flag", 0),
+            pit_limiter=graphics_raw.get("pit_limiter", False),
+            tyre_compound=graphics_raw.get("tyre_compound", ""),
+            delta_lap_time=graphics_raw.get("i_delta_lap_time", 0),
+            is_delta_positive=graphics_raw.get("is_delta_positive", False),
+            fuel_used_per_lap=graphics_raw.get("fuel_used_per_lap", 0.0),
+            penalty_time=graphics_raw.get("penalty_time", 0.0),
+            penalty=int(graphics_raw.get("penalty", 0)),
+            stint_time_left=int(graphics_raw.get("driver_stint_time_left", 0)),
+            number_of_laps=int(graphics_raw.get("number_of_laps", 0)),
+            tc_cut=int(graphics_raw.get("tc_cut", 0)),
+            clock=graphics_raw.get("clock", 0.0),
+            mandatory_pit_done=bool(graphics_raw.get("mandatory_pit_done", False)),
         )
 
-        # Create static data (air/road temp from graphics packet)
+        # Create static data with pit window, car specs, ERS capacity
         static = StaticData(
             car_model=static_raw["car_model"],
             track_name=static_raw["track"],
             player_name=static_raw["player_name"],
-            air_temp=graphics_raw["ambient_temp"],
-            road_temp=graphics_raw["road_temp"],
+            air_temp=physics_raw.get("air_temp", 0.0),
+            road_temp=physics_raw.get("road_temp", 0.0),
+            pit_window_start=int(static_raw.get("pit_window_start", 0)),
+            pit_window_end=int(static_raw.get("pit_window_end", 0)),
+            max_power=static_raw.get("max_power", 0.0),
+            max_torque=static_raw.get("max_torque", 0.0),
+            kers_max_j=static_raw.get("kers_max_j", 0.0),
+            ers_max_j=static_raw.get("ers_max_j", 0.0),
+            is_timed_race=bool(static_raw.get("is_timed_race", False)),
         )
 
         # Combine into normalized telemetry

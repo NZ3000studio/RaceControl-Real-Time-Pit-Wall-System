@@ -15,6 +15,13 @@ const statusDotColor = (status: number): string => {
   }
 };
 
+function formatStint(seconds: number): string {
+  if (seconds <= 0) return "--";
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 export default function SessionHeader() {
   const data = useTelemetryStore((s) => s.data);
   const connected = useTelemetryStore((s) => s.connected);
@@ -35,10 +42,16 @@ export default function SessionHeader() {
   const currentLap = data?.graphics.current_lap ?? "--";
   const position = data?.graphics.position ?? "--";
   const numCars = data?.graphics.num_cars ?? "--";
+  const airTemp = data?.static.air_temp ?? null;
+  const roadTemp = data?.static.road_temp ?? null;
+  const stintLeft = data?.graphics.stint_time_left ?? 0;
+  const penaltyTime = data?.graphics.penalty_time ?? 0;
+  const pitWindowStart = data?.static.pit_window_start ?? 0;
+  const pitWindowEnd = data?.static.pit_window_end ?? 0;
 
   return (
     <header className="bg-rc-surface border-b border-rc-border px-4 py-2">
-      <div className="flex items-center gap-3 text-sm">
+      <div className="flex items-center gap-3 text-sm flex-wrap">
         {/* Session type chip */}
         <span className="text-rc-accent font-semibold tracking-wide uppercase text-xs">
           {sessionType}
@@ -75,7 +88,7 @@ export default function SessionHeader() {
 
         <span className="text-rc-border">|</span>
 
-        {/* Lap number — font-mono for numeric */}
+        {/* Lap number */}
         <span className="text-rc-muted">
           Lap{" "}
           <span className="font-mono text-rc-text">{currentLap}</span>
@@ -83,7 +96,7 @@ export default function SessionHeader() {
 
         <span className="text-rc-border">|</span>
 
-        {/* Position — font-mono for numeric */}
+        {/* Position */}
         <span className="text-rc-muted">
           Pos{" "}
           <span className="font-mono text-rc-text">
@@ -91,9 +104,62 @@ export default function SessionHeader() {
           </span>
         </span>
 
-        {/* Disconnected indicator (right-aligned) */}
+        {/* Right-aligned info group */}
+        <span className="ml-auto flex items-center gap-3">
+          {/* Temps */}
+          <span className="text-xs text-rc-muted font-mono">
+            Air{" "}
+            <span className="text-rc-text">
+              {airTemp !== null ? `${airTemp.toFixed(1)}°` : "--"}
+            </span>
+          </span>
+          <span className="text-xs text-rc-muted font-mono">
+            Track{" "}
+            <span className="text-rc-text">
+              {roadTemp !== null ? `${roadTemp.toFixed(1)}°` : "--"}
+            </span>
+          </span>
+
+          {/* Pit window */}
+          {pitWindowStart > 0 && (
+            <>
+              <span className="text-rc-border">|</span>
+              <span className="text-xs text-rc-muted font-mono">
+                Pit{" "}
+                <span className="text-rc-text">
+                  {pitWindowStart}-{pitWindowEnd}
+                </span>
+              </span>
+            </>
+          )}
+
+          {/* Stint time left */}
+          {stintLeft > 0 && (
+            <>
+              <span className="text-rc-border">|</span>
+              <span className="text-xs text-rc-muted font-mono">
+                Stint{" "}
+                <span className="text-rc-text">
+                  {formatStint(stintLeft)}
+                </span>
+              </span>
+            </>
+          )}
+
+          {/* Penalty */}
+          {penaltyTime > 0 && (
+            <>
+              <span className="text-rc-border">|</span>
+              <span className="text-xs text-red-400 font-mono font-bold">
+                PEN {penaltyTime.toFixed(0)}s
+              </span>
+            </>
+          )}
+        </span>
+
+        {/* Disconnected indicator */}
         {!connected && (
-          <span className="ml-auto text-xs font-medium text-rc-warn">
+          <span className="text-xs font-medium text-rc-warn">
             Disconnected
           </span>
         )}

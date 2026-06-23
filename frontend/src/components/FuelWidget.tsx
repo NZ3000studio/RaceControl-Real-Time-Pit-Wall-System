@@ -22,6 +22,7 @@ export default function FuelWidget() {
   const fuelRemaining = physics?.fuel ?? null;
   const maxFuel = physics?.max_fuel ?? null;
   const lapsRemaining = graphics?.fuel_estimate_remaining_laps ?? null;
+  const fuelPerLap = graphics?.fuel_used_per_lap ?? null;
 
   const fuelPercent =
     fuelRemaining !== null && maxFuel !== null && maxFuel > 0
@@ -41,7 +42,8 @@ export default function FuelWidget() {
         <div
           className={`h-full transition-all duration-300 ${fuelBarColor}`}
           style={{
-            width: fuelPercent !== null ? `${Math.min(fuelPercent, 100)}%` : "0%",
+            width:
+              fuelPercent !== null ? `${Math.min(fuelPercent, 100)}%` : "0%",
           }}
         />
       </div>
@@ -55,13 +57,22 @@ export default function FuelWidget() {
         </span>
       </div>
 
-      <div className="flex items-center gap-2">
-        <span className="text-rc-muted text-xs uppercase tracking-wider">
-          Laps Remaining
-        </span>
-        <span className="text-rc-text font-mono text-lg font-bold">
-          {lapsRemaining !== null ? lapsRemaining : "---"}
-        </span>
+      <div className="flex justify-between items-center">
+        <div className="flex items-center gap-2">
+          <span className="text-rc-muted text-xs uppercase tracking-wider">
+            Laps Left
+          </span>
+          <span className="text-rc-text font-mono text-lg font-bold">
+            {lapsRemaining !== null
+              ? lapsRemaining.toFixed(1)
+              : "---"}
+          </span>
+        </div>
+        {fuelPerLap !== null && fuelPerLap > 0 && (
+          <span className="text-xs text-rc-muted font-mono">
+            ~{fuelPerLap.toFixed(2)} L/lap
+          </span>
+        )}
       </div>
     </div>
   );
