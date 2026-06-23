@@ -123,22 +123,22 @@ Reads raw telemetry directly from Assetto Corsa shared memory regions.
 
 ## Technologies
 
-* mmap
+* OpenFileMappingW + MapViewOfFile (Windows named shared memory API)
 * ctypes
 * asyncio
 
 ## Shared Memory Regions
 
-* acpmf_physics
-* acpmf_graphics
-* acpmf_static
+* Local\acpmf_physics (single-car physics, 800B SPageFilePhysics struct)
+* Local\acpmf_graphics (session state, 1,500B SPageFileGraphic struct)
+* Local\acpmf_static (static info, 688B SPageFileStatic struct)
 
 ## Responsibilities
 
-* Read raw binary memory
-* Parse binary structs
-* Convert values into typed Python models
-* Handle polling loop timing
+* Open Windows named shared memory via OpenFileMappingW + MapViewOfFile
+* Cast memory views to ctypes structs with from_buffer_copy
+* Decode UTF-16LE wide strings via wchar_to_str helper
+* Handle polling loop timing and auto-reconnect
 
 ---
 

@@ -21,7 +21,7 @@ cd frontend && npm install && npm run dev                    # Vite dev server o
 
 ```
 Assetto Corsa (Windows Shared Memory: acpmf_physics/graphics/static)
-    ↓ mmap + ctypes (100Hz poll)
+    ↓ OpenFileMappingW + MapViewOfFile + ctypes (100Hz poll)
 AsyncACReader → TelemetryPipeline._normalize() → NormalizedTelemetry
     ↓ throttle to 20Hz
 TelemetryBroadcaster → WebSocket /ws/telemetry → React frontend
@@ -39,7 +39,7 @@ SessionManager (tracks lap changes, session lifecycle)
 ## Key Constraints
 
 - **Backend authoritative**: all race logic in backend only. Frontend visualizes, never computes strategy.
-- **Windows only**: shared memory reader uses Windows named memory maps (`acpmf_*`). Will fail gracefully on Linux.
+- **Windows only**: shared memory reader uses OpenFileMappingW + MapViewOfFile on `Local\acpmf_*` named shared memory. Will fail gracefully on Linux.
 - **Non-blocking everywhere**: `asyncio.sleep()`, never `time.sleep()`. All I/O is async.
 - **Complete frames over WebSocket**: backend sends full `NormalizedTelemetry` frames, not deltas.
 - **Type hints required** on all function signatures.

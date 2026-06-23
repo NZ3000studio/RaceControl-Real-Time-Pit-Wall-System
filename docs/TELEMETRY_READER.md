@@ -2,51 +2,50 @@
 
 ## Overview
 
-This document summarizes the implementation of the Assetto Corsa shared memory reader, a critical low-level component for telemetry ingestion.
+This document summarizes the implementation of the Assetto Corsa shared memory reader, a critical low-level component for telemetry ingestion. The reader uses Windows `OpenFileMappingW` + `MapViewOfFile` to access AC's named shared memory regions (`Local\acpmf_*`).
 
 ## Files Delivered
 
-### 1. `ac_structs.py` (294 lines)
+### 1. `ac_structs.py` (242 lines)
 
-**Purpose:** Define ctypes structures for AC shared memory packets.
+**Purpose:** Define ctypes structures matching AC's wire format exactly (based on the `simetry` Rust crate `#[repr(C, packed(4))]`).
 
 **Key Components:**
 
-- **`CarPhysics`** - Single car physics (401 bytes)
+- **`SPageFilePhysics`** - Single car physics state (800 bytes)
   - 4 wheels of data: speeds, slip angle, slip ratio, load, temps, wear, pressure, suspension
   - Engine data: speed, RPM, gear, throttle, brake, fuel, etc.
-  - Turbo, ERS, force feedback data
-  - 32+ fields covering all physics parameters
+  - Turbo, ERS, force feedback, damage data
+  - 80+ fields covering all physics parameters
+  - Flat struct — reads the player car directly, no car array
 
-- **`PhysicsPacket`** - Complete physics (25,736 bytes)
-  - Up to 64 cars of CarPhysics data
-  - Metadata: nbCars, focusedCarIndex, activeCars
-  - Used to read player car via focusedCarIndex lookup
+- **`SPageFileGraphic`** - Graphics/session state (1,500 bytes)
+  - Session status (off/replay/live/paused), session type
+  - Lap times (current, best, last, split) as UTF-16LE wide strings
+  - Lap count, position, fuel estimates
+  - Track grip, TC/ABS/engine map, DRS/rain light state
+  - Penalties, pit status, wind, surface grip
+  - Car coordinates for up to 60 opponent cars
 
-- **`GraphicsPacket`** - Session info (360 bytes)
-  - Session status, lap number, position
-  - Lap times (current, best, last, split)
-  - Ambient conditions, grip level
-  - DRS/ERS/fuel data
-  - Setup info (TC, ABS, engine map)
-
-- **`StaticPacket`** - Static info (792 bytes)
-  - Car model, track, driver names
-  - Session count, sector count
-  - Track spline length
-  - Flags: has DRS, ERS, KERS
+- **`SPageFileStatic`** - Static car/track info (688 bytes)
+  - Car model, track name, driver name/surname/nickname
+  - AC version, shared memory version
+  - Session count, sector count, track spline length
+  - Capability flags (DRS, ERS, KERS)
+  - Pit window, fuel/tire/mechanical aid rates
+  - All strings as UTF-16LE wide char arrays
 
 **Design Decisions:**
 
-- `_pack_ = 1` to match binary layout exactly
-- All fields properly typed: `c_float`, `c_int`, `c_char`, `c_ubyte`
-- Wheels stored as fixed arrays: [FL, FR, RL, RR]
-- Padding fields included to maintain struct alignment
+- `_pack_ = 4` to match Rust `#[repr(C, packed(4))]` alignment
+- All fields typed: `c_float`, `c_int32`, `c_uint16` (for wide strings)
+- Wheels stored as fixed arrays `c_float * 4`: [FL, FR, RL, RR]
+- Strings decoded from UTF-16LE via `wchar_to_str()` helper
 - Helper function `get_struct_sizes()` for validation
 
-### 2. `reader.py` (393 lines)
+### 2. `reader.py` (298 lines)
 
-**Purpose:** Async interface for reading AC shared memory.
+**Purpose:** Async interface for reading AC shared memory using Windows native API.
 
 **Key Class: `AsyncACReader`**
 
@@ -54,7 +53,7 @@ Methods:
 
 ```python
 async def connect() -> bool
-    # Connect to AC shared memory
+    # Connect to AC shared memory via OpenFileMappingW + MapViewOfFile
     # Returns True if successful, False if AC not running
     # Safe to call repeatedly
 
@@ -68,7 +67,7 @@ async def read() -> dict | None
     # Returns None if not connected
 
 async def disconnect() -> None
-    # Clean up resources
+    # Unmap all shared memory views via UnmapViewOfFile
     # Safe to call multiple times
 ```
 
@@ -77,97 +76,139 @@ async def disconnect() -> None
 ```python
 {
     'physics': {
-        'speed': float,              # m/s
+        'speed': float,              # m/s (converted from km/h)
         'rpm': float,
-        'gear': int,                 # 0-6
-        'throttle': float,           # 0-1
+        'gear': int,                 # 0=R, 1=N, 2-7=fwd
+        'throttle': float,           # 0-1 (gas pedal)
         'brake': float,              # 0-1
+        'clutch': float,             # 0-1
+        'handbrake': 0.0,            # placeholder (not in AC struct)
+        'steer': float,              # rad, -1 to 1
         'fuel': float,               # liters
+        'max_fuel': 0.0,             # populated later from static
+        'fuel_per_lap': 0.0,         # placeholder
         'wheel_speeds': [4 floats],
+        'wheel_slip_angle': [4 floats],
+        'wheel_slip_ratio': [4 floats],
+        'wheel_load': [4 floats],
         'wheel_temps': [4 floats],   # Celsius
-        'brake_temps': [4 floats],   # Kelvin
-        'wheel_wear': [4 floats],    # 0-1 (1=new)
-        # ... 20+ more fields
+        'wheel_wear': [4 floats],    # 0-1
+        'wheel_pressure': [4 floats],
+        'tire_core_temps': [4 floats],
+        'brake_temps': [4 floats],
+        'brake_disc_temps': [4 floats],
+        'suspension_travel': [4 floats],
+        'engine_temp': float,
+        'road_temp': float,
+        'air_density': float,
+        'turbo_boost': float,
+        'clutch_slip': float,
+        'final_ff': float,
+        'performance_meter': float,
+        'local_angular_velocity': [3 floats],
     },
     'graphics': {
         'status': int,               # 0=off, 1=replay, 2=live, 3=paused
-        'session': int,              # session type
+        'session': int,              # 0=practice, 1=qualify, 2=race, ...
         'lap': int,
         'position': int,
         'fuel_remaining': float,     # estimated laps
-        'ambient_temp': float,       # Celsius
-        # ... 15+ more fields
+        'current_time': str,         # "M:SS.mmm"
+        'last_time': str,
+        'best_time': str,
+        'split_time': str,
+        'session_time_left': float,
+        'track_grip_level': float,
+        'rain_lights': bool,
+        'rain_tires': bool,
+        'traction_control': int,
+        'abs_level': int,
+        'engine_map': int,
+        'pit_limiter': bool,         # is_in_pit_lane
+        'engine_temp': float,        # exhaust temperature
+        'is_lap_valid': bool,
+        'packet_id': int,
     },
     'static': {
         'car_model': str,
         'track': str,
         'player_name': str,
-        # ... 10+ more fields
+        'player_surname': str,
+        'player_nick': str,
+        'number_of_cars': int,
+        'number_of_sessions': int,
+        'sector_count': int,
+        'max_fuel': float,
+        'has_drs': bool,
+        'has_ers': bool,
+        'has_kers': bool,
+        'track_spline_length': float,
+        'track_configuration': str,
+        'sm_version': str,
+        'ac_version': str,
     }
 }
 ```
 
 **Implementation Details:**
 
-- **Windows-only:** Uses Windows named shared memory API
+- **Windows-only:** Uses `OpenFileMappingW` + `MapViewOfFile` for named shared memory
+- **Memory names:** `Local\acpmf_physics`, `Local\acpmf_graphics`, `Local\acpmf_static`
 - **Async throughout:** No blocking calls, uses `asyncio.sleep()`
-- **Graceful degradation:** Returns None when AC disconnects
-- **Automatic reconnection:** Detects AC restart and reconnects
+- **Graceful degradation:** Returns None when AC disconnects, sets `_connected = False`
 - **Error handling:** All exceptions caught and logged
 - **Logging:** Uses standard Python logging (DEBUG, INFO, WARNING levels)
 - **Type hints:** Full type annotations on all methods
 
 **Private Methods:**
 
-- `_open_shared_memory(name)` - Open Windows named memory region
-- `_read_physics_packet()` - Parse physics data
-- `_read_graphics_packet()` - Parse graphics data
-- `_read_static_packet()` - Parse static data
-
-### 3. `README.md` (9.7 KB)
-
-Comprehensive user documentation covering:
-
-- Overview and features
-- File descriptions
-- Usage examples (basic and FastAPI integration)
-- Telemetry data structure reference
-- Polling strategy explanation
-- Error handling patterns
-- Struct layout notes and maintenance
-- Testing procedures
-- Performance characteristics
-- Limitations and future enhancements
+- `_open_shared_memory(name, size)` - Open Windows named shared memory with `OpenFileMappingW` + `MapViewOfFile`
+- `_close_shared_memory(view, size)` - Unmap shared memory via `UnmapViewOfFile`
+- `_read_physics_packet()` - Cast view pointer to `SPageFilePhysics`, extract fields
+- `_read_graphics_packet()` - Cast view pointer to `SPageFileGraphic`, extract fields
+- `_read_static_packet()` - Cast view pointer to `SPageFileStatic`, extract fields
 
 ## Design Decisions & Rationale
 
-### 1. Struct Layout (`_pack_ = 1`)
+### 1. Shared Memory Access: OpenFileMappingW + MapViewOfFile (not os.open/mmap)
 
-**Why:** AC shared memory has a specific binary layout. Using `_pack_ = 1` ensures ctypes doesn't add padding between fields, matching AC's format exactly.
+**Why:** AC's shared memory is created as Windows named file mappings (`CreateFileMapping` with `Local\` namespace). The `os.open()` + `mmap.mmap()` approach only works for files on disk, not named kernel objects. Using the native Windows API (`OpenFileMappingW` + `MapViewOfFile`) directly matches AC's kernel-level shared memory mechanism.
 
-**Alternative considered:** Hand-calculating all offsets - rejected because error-prone and harder to maintain.
+**Alternative considered:** `mmap.mmap()` with a file descriptor to a temp file - rejected because AC uses named memory maps, not file-backed maps.
 
-### 2. Async Interface
+### 2. Struct Layout (`_pack_ = 4`)
+
+**Why:** AC's shared memory layout is defined in the `simetry` Rust crate with `#[repr(C, packed(4))]`. Using `_pack_ = 4` ensures ctypes alignment matches Rust's packed struct alignment.
+
+**Alternative considered:** `_pack_ = 1` - rejected because it doesn't match Rust's `packed(4)`.
+
+### 3. Flat Struct (not multi-car array)
+
+**Why:** The reader now uses a flat `SPageFilePhysics` struct for a single car instead of an array-of-structs `PhysicsPacket` with 64 cars. AC publishes the player car's physics in `acpmf_physics` as a single struct, not a car array. The previous array-based approach was incorrect.
+
+**Implementation:** Directly cast the shared memory view to `SPageFilePhysics` without any car index lookup.
+
+### 4. UTF-16LE Wide Strings (not ASCII)
+
+**Why:** AC stores strings (driver names, car models, track names, lap times) as UTF-16LE wide character arrays. Using `c_char` (ASCII) corrupted multi-byte characters and caused incorrect string lengths.
+
+**Implementation:** Field types changed from `c_char * N` to `c_uint16 * N`, decoded via `wchar_to_str()` which calls `bytes(arr).decode("utf-16-le")`.
+
+### 5. Async Interface
 
 **Why:** The backend is async (FastAPI + asyncio). Non-blocking polling allows the reader to coexist with other async tasks without blocking the event loop.
 
 **Implementation:** Uses `asyncio.sleep()` instead of `time.sleep()`.
 
-### 3. Player Car Only (focusedCarIndex)
-
-**Why:** MVP scope. Telemetry system focuses on player car. Other cars can be added later.
-
-**Implementation:** In `_read_physics_packet()`, uses `focusedCarIndex` to pick the right car from the array.
-
-### 4. Graceful Failure
+### 6. Graceful Failure
 
 **Why:** AC may not be running, may crash, permissions may fail. Reader must not crash the entire backend.
 
 **Implementation:** All exceptions caught, logged, and `read()` returns None. The application layer decides how to handle missing telemetry.
 
-### 5. No Extra Dependencies
+### 7. No Extra Dependencies
 
-**Why:** Uses only stdlib (mmap, ctypes, logging, asyncio). Reduces deployment complexity.
+**Why:** Uses only stdlib (ctypes, asyncio, logging). Reduces deployment complexity.
 
 **Alternative considered:** PyAC library - rejected because adds dependency and less control.
 
@@ -175,23 +216,19 @@ Comprehensive user documentation covering:
 
 ### Tests Run
 
-1. ✓ Import validation
-2. ✓ Struct size validation (sizes reasonable)
-3. ✓ Field presence validation (all required fields exist)
-4. ✓ Reader interface validation (all methods present)
-5. ✓ Async functionality (connect/read/disconnect work)
-6. ✓ Type hints validation
+1. Import validation
+2. Struct size validation (sizes match expected)
+3. Field presence validation (all required fields exist)
+4. Reader interface validation (all methods present)
+5. Async functionality (connect/read/disconnect work)
+6. Type hints validation
 
-### Test Results
+### Struct Sizes
 
 ```
-Struct Sizes:
-  PhysicsPacket: 25,736 bytes
-  GraphicsPacket: 360 bytes
-  StaticPacket: 792 bytes
-  CarPhysics: 401 bytes
-
-All 6 test categories PASSED
+SPageFilePhysics:       800 bytes  (flat single-car struct)
+SPageFileGraphic:     1,500 bytes  (session + graphics state)
+SPageFileStatic:        688 bytes  (static car/track info)
 ```
 
 ### Manual Testing Without AC
@@ -209,99 +246,97 @@ data = await reader.read()          # Returns None (not connected)
 ### With Backend Pipeline
 
 ```
-AC Shared Memory
+AC Shared Memory (acpmf_physics, acpmf_graphics, acpmf_static)
+       ↓
+OpenFileMappingW + MapViewOfFile
+       ↓
+ctypes.from_buffer_copy() → SPageFilePhysics/Graphic/Static
        ↓
 AsyncACReader.read() ← polls every 10ms
        ↓
 Returns dict with physics/graphics/static
        ↓
-Processing layer (next phase)
+TelemetryPipeline._normalize() → NormalizedTelemetry (Pydantic)
        ↓
-Pydantic models for validation
-       ↓
-WebSocket broadcast
+WebSocket broadcast (throttled to 20Hz)
 ```
 
-### Expected Usage Pattern
+### Auto-Reconnect in Pipeline
+
+The `TelemetryPipeline._poll_loop()` implements automatic reconnection:
 
 ```python
-# In FastAPI app startup
-reader = AsyncACReader()
-
-# In polling task
-async def poll_telemetry():
-    while True:
-        if not await reader.is_connected():
-            await reader.connect()
-        
-        telemetry = await reader.read()
-        if telemetry:
-            # Process telemetry
-            await process_and_broadcast(telemetry)
-        
-        await asyncio.sleep(0.01)  # 100Hz
-
-# In shutdown
-await reader.disconnect()
+# In polling loop
+if not await self._reader.is_connected():
+    if now - last_reconnect_attempt >= 2.0:  # Every 2 seconds
+        await self._reader.connect()
 ```
+
+This allows the backend to recover when AC starts after the backend, or when AC restarts mid-session.
 
 ## Known Limitations
 
-1. **Windows only** - Uses Windows APIs for shared memory
-2. **AC must be running** - Cannot read if AC not started
-3. **Player car only** - Doesn't read other cars (MVP limitation)
-4. **Memory structure dependent** - Struct offsets must match AC version
-5. **Binary memory vulnerability** - AC crash could corrupt shared memory
+1. **Windows only** - Uses `OpenFileMappingW` for named shared memory; fails gracefully on Linux.
+2. **AC must be running** - Cannot read if AC not started.
+3. **Player car only** - Reads player car physics (single flat struct in `acpmf_physics`).
+4. **Memory structure dependent** - Struct offsets must match AC version; based on `simetry` Rust crate layout.
+5. **Strings are UTF-16LE** - String fields use wide character encoding; decoded via `wchar_to_str()`.
 
 ## Future Enhancement Opportunities
 
 1. AC version detection with struct validation
-2. Multi-car telemetry support
-3. Memory-mapped file caching for offline analysis
-4. Automatic struct offset detection
-5. Cross-platform support (Mac/Linux via alternative APIs)
+2. Opponent car telemetry (available via `car_coordinates`/`car_id` in graphics struct)
+3. Offline replay/demo mode with recorded telemetry
+4. Memory-mapped file caching for offline analysis
+5. Automatic struct offset detection
 
 ## Code Quality Metrics
 
 - **Type coverage:** 100% (full type hints on all public methods)
 - **Docstring coverage:** 100% (all classes and methods documented)
-- **Lines of code:** 687 total (294 structs + 393 reader)
+- **Lines of code:** 540 total (242 structs + 298 reader)
 - **Cyclomatic complexity:** Low (simple linear flow)
 - **Error handling:** All exceptions caught and logged
 
 ## Architecture Compliance
 
-✓ **Non-blocking:** Full async/await design  
-✓ **Type safe:** Complete type hints throughout  
-✓ **Modular:** Separate concerns (structs vs reader)  
-✓ **Documented:** README, docstrings, inline comments  
-✓ **Tested:** Comprehensive validation  
-✓ **Maintainable:** Clear structure, easy to extend  
-✓ **Zero dependencies:** Uses only stdlib  
-✓ **Production-ready:** Error handling, logging, graceful failure  
+- **Non-blocking:** Full async/await design
+- **Type safe:** Complete type hints throughout
+- **Modular:** Separate concerns (structs vs reader)
+- **Documented:** README, docstrings, inline comments
+- **Tested:** Comprehensive validation
+- **Maintainable:** Clear structure, easy to extend
+- **Zero dependencies:** Uses only stdlib
 
 ## Acceptance Criteria Status
 
-- ✅ `ac_structs.py` defines all 3 packet types with correct field layout
-- ✅ `reader.py` implements AsyncACReader class
-- ✅ Reader connects to AC when AC is running
-- ✅ Reader detects AC disconnection
-- ✅ Reader returns valid telemetry dict with minimum required fields
-- ✅ No blocking calls - fully async
-- ✅ Full type hints throughout
-- ✅ Graceful failure with logging
-- ✅ Can poll continuously without memory leaks
-- ✅ Windows-only (documented)
+- `ac_structs.py` defines all 3 packet types (SPageFilePhysics, SPageFileGraphic, SPageFileStatic) with correct field layout
+- `reader.py` implements AsyncACReader class
+- Reader connects to AC when AC is running via OpenFileMappingW + MapViewOfFile
+- Reader detects AC disconnection
+- Reader returns valid telemetry dict with all required fields
+- No blocking calls - fully async
+- Full type hints throughout
+- Graceful failure with logging
+- Can poll continuously without memory leaks
+- Windows-only (documented)
 
-## Next Steps (Not in Scope)
+## Integration Ready
 
-Phase 1.3: Pydantic Models
-- Create normalized models from raw dict output
-- Add validation layer
-- Type-safe telemetry handling
+The reader is ready to integrate with the backend pipeline. Usage pattern:
 
-Phase 1.4: Processing Engine
-- Fuel calculations
-- Tire analysis
-- Pace delta
-- Pit window estimation
+```python
+# In FastAPI app startup
+from app.telemetry.reader import AsyncACReader
+
+reader = AsyncACReader()
+
+# Connect (safe to retry)
+if await reader.connect():
+    telemetry = await reader.read()
+    if telemetry:
+        print(f"Speed: {telemetry['physics']['speed']} m/s")
+
+# On shutdown
+await reader.disconnect()
+```
